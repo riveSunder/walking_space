@@ -9,8 +9,6 @@ import skimage
 import skimage.io as sio
 import matplotlib.pyplot as plt
 
-from src.asm_prop import save_as_gif, run_train
-
 
 def get_data(mode=0, batch_size=128, stretch=1.):
 
