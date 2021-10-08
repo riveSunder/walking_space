@@ -59,7 +59,7 @@ def get_loss(wavefront, y_tgt, phase_objects, d=100.e-3):
 get_grad = grad(get_loss, argnum=2)
 
 
-def save_as_gif(np_array, filename="my_gif.gif", my_cmap=None):
+def save_as_gif(np_array, filename="my_gif.gif", my_cmap=None, duration_scaler=3):
     
     assert (len(np_array.shape) == 3), "expected n by h by w array"
     
@@ -70,7 +70,7 @@ def save_as_gif(np_array, filename="my_gif.gif", my_cmap=None):
     
     im = Image.fromarray((my_cmap(np_array[0])*255).astype("uint8"), "RGBA")
 
-    im.save(f"assets/{filename}", save_all=True, duration=3*np_array.shape[0], loop=0, \
+    im.save(f"assets/{filename}", save_all=True, duration=duration_scaler*np_array.shape[0], loop=0, \
             append_images=[Image.fromarray((my_cmap(img)*255).astype("uint8"), "RGBA") for img in np_array[1:]])
 
 def train_run(tgt_img, zero_pad=True):
@@ -131,4 +131,95 @@ def train_run(tgt_img, zero_pad=True):
             print("stopping training")
             break
     
-    return np.array(training_arrays), losses, tgt_img
+    return np.array(training_arrays), losses, y_tgt
+
+
+def onn_layer_inverse(wavefront, phase_object, d=100.e-3):
+
+    wavefront = asm_prop(wavefront * phase_object, distance=d)
+
+    return wavefront
+
+def get_loss_inverse(wavefront, y_tgt, phase_object, d=100.e-3):
+
+    img_pred = np.abs(onn_layer_inverse(wavefront, phase_object, d=d))**2
+    img_tgt = np.abs(onn_layer_inverse(wavefront, y_tgt, d=d))**2
+
+    mse_loss = np.mean((img_pred - img_tgt)**2)
+
+    return mse_loss
+
+def get_tgt_pred_image(wavefront, y_tgt, phase_object, d=100.e-3):
+
+    img_pred = np.abs(onn_layer_inverse(wavefront, phase_object, d=d))**2
+    img_tgt = np.abs(onn_layer_inverse(wavefront, y_tgt, d=d))**2
+
+    return np.append(img_tgt, img_pred, axis=1)
+
+get_grad_inverse = grad(get_loss_inverse, argnum=2)
+
+def train_run_inverse(tgt_img, zero_pad=True):
+
+    dim = 128
+    side_length = 32.e-3
+    aperture = 8.e-3
+    wavelength = 550.e-9
+    k0 = 2*np.pi / wavelength
+    dist = 1600.e-3
+
+    if zero_pad:
+        tgt_img = np.pad(tgt_img, (tgt_img.shape[0], tgt_img.shape[1]))
+    # resize target image
+    tgt_img = skimage.transform.resize(tgt_img, (dim, dim))
+
+    px = side_length / dim
+
+    x = np.linspace(-side_length/2, side_length/2-px, dim)
+
+    xx, yy = np.meshgrid(x,x)
+    rr = np.sqrt(xx**2 + yy**2)
+
+    wavefront = np.zeros((dim,dim)) * np.exp(1.j*k0*0.0)
+    wavefront[rr <= aperture] = 1.0
+
+    #tgt_img = sio.imread("./smiley.png")[:,:,0]
+
+    y_tgt = 1.0 * tgt_img / np.max(tgt_img)
+    y_tgt = np.exp( 1.j * y_tgt )
+
+    lr = 1e-3
+
+    phase_object = np.exp(1.j * np.random.rand(dim, dim) / 10 )
+    losses = []
+
+    training_arrays = []
+    images = []
+    smooth_slope = 0.0
+
+    for step in range(10024):
+
+
+        my_grad = get_grad_inverse(wavefront, y_tgt, phase_object, \
+                d=dist+ np.random.randn() * 200.e-3)
+
+        for params, grads in zip(phase_object, my_grad):
+            params -=  lr * np.exp( -1.j * np.angle(grads))
+
+        loss = get_loss_inverse(wavefront, y_tgt, phase_object,d=dist)
+        losses.append(loss)
+
+        if step % 16 == 0:
+            print("loss at step {} = {:.2e}, lr={:.3e}".format(step, loss, lr))
+
+        image_compare = get_tgt_pred_image(wavefront, y_tgt, phase_object, d=dist)
+        training_arrays.append(np.angle(phase_object))
+        images.append(image_compare)
+
+        if len(losses) > 1:
+            smooth_slope = 0.99 * smooth_slope + 0.01 * (losses[-2] - losses[-1])
+
+            if smooth_slope < 0.0:
+                print("stopping training")
+                break
+
+    return np.array(training_arrays), losses, np.angle(y_tgt), np.array(images)
