@@ -73,7 +73,7 @@ def save_as_gif(np_array, filename="my_gif.gif", my_cmap=None):
     im.save(f"assets/{filename}", save_all=True, duration=3*np_array.shape[0], loop=0, \
             append_images=[Image.fromarray((my_cmap(img)*255).astype("uint8"), "RGBA") for img in np_array[1:]])
 
-def run_train(tgt_img, zero_pad=True):
+def train_run(tgt_img, zero_pad=True):
 
     dim = 128
     side_length = 32.e-3
